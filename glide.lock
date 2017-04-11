@@ -1,0 +1,12 @@
+hash: 7e5e4b4db268d05e7df6c6e9ed9de0091a198c449fa2416200ab306190160ac4
+updated: 2017-04-11T20:27:33.240418948+10:00
+imports:
+- name: github.com/aws/aws-sdk-go
+  version: 200fde3f632bb9f036ec0b8cb29fbc8588155ea5
+- name: github.com/pkg/errors
+  version: 645ef00459ed84a119197bfb8d8205042c6df63d
+- name: github.com/Sirupsen/logrus
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
+- name: github.com/urfave/cli
+  version: 0bdeddeeb0f650497d603c4ad7b20cfe685682f6
+testImports: []
