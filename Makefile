@@ -1,6 +1,6 @@
 OUT := ddns
 PKG := github.com/dedalusj/ddns
-VERSION := $(shell git describe --always --long)
+VERSION := $(shell git describe --always)
 PKG_LIST := $(shell go list ${PKG}/... | grep -v /vendor/)
 GO_FILES := $(shell find . -name '*.go' | grep -v /vendor/)
 
