@@ -15,7 +15,7 @@ type Tag struct {
 func NewTag(tag string) (Tag, error) {
 	pieces := strings.SplitN(tag, "=", 2)
 	if len(pieces) < 2 {
-		return nil, fmt.Errorf("Invalid tag [%s]. Expected tag=value format", tag)
+		return Tag{}, fmt.Errorf("Invalid tag [%s]. Expected tag=value format", tag)
 	}
 	t := Tag{Name: pieces[0], Value: pieces[1]}
 	log.WithFields(log.Fields{

@@ -170,7 +170,11 @@ func findDeletedInstances(instanceIPSet, dnsIPSet map[string]bool) []string {
 	return deletedInstances
 }
 
-func registerCreatedInstances(createdInstanceIPs []string, prefix, hostedZoneId string, client route53iface.Route53API) error {
+func registerCreatedInstances(createdInstanceIPs []string, prefix, domain, hostedZoneId string, client route53iface.Route53API) error {
+	if len(createdInstanceIPs) == 0 {
+		return nil
+	}
+
 	params := &route53.ChangeResourceRecordSetsInput{
 		ChangeBatch: &route53.ChangeBatch{
 			Changes: []*route53.Change{},
@@ -182,7 +186,7 @@ func registerCreatedInstances(createdInstanceIPs []string, prefix, hostedZoneId 
 		change := &route53.Change{
 			Action: aws.String("CREATE"),
 			ResourceRecordSet: &route53.ResourceRecordSet{
-				Name: aws.String(getDNSFromIP(ip, prefix)),
+				Name: aws.String(getDNSFromIP(ip, prefix) + "." + domain),
 				Type: aws.String("A"),
 				ResourceRecords: []*route53.ResourceRecord{{Value: aws.String(ip)}},
 				TTL: aws.Int64(60),
@@ -202,7 +206,11 @@ func registerCreatedInstances(createdInstanceIPs []string, prefix, hostedZoneId 
 	return nil
 }
 
-func removeDeletedInstances(deletedInstanceIPs []string, prefix, hostedZoneId string, client route53iface.Route53API) error {
+func removeDeletedInstances(deletedInstanceIPs []string, prefix, domain, hostedZoneId string, client route53iface.Route53API) error {
+	if len(deletedInstanceIPs) == 0 {
+		return nil
+	}
+
 	params := &route53.ChangeResourceRecordSetsInput{
 		ChangeBatch: &route53.ChangeBatch{
 			Changes: []*route53.Change{},
@@ -214,7 +222,7 @@ func removeDeletedInstances(deletedInstanceIPs []string, prefix, hostedZoneId st
 		change := &route53.Change{
 			Action: aws.String("DELETE"),
 			ResourceRecordSet: &route53.ResourceRecordSet{
-				Name: aws.String(getDNSFromIP(ip, prefix)),
+				Name: aws.String(getDNSFromIP(ip, prefix) + "." + domain),
 			},
 		}
 		params.ChangeBatch.Changes = append(params.ChangeBatch.Changes, change)
@@ -231,7 +239,7 @@ func removeDeletedInstances(deletedInstanceIPs []string, prefix, hostedZoneId st
 	return nil
 }
 
-func reconcile(instanceIPs, dnsNames []string, prefix, hostedZoneId string, client route53iface.Route53API) error {
+func reconcile(instanceIPs, dnsNames []string, prefix, domain, hostedZoneId string, client route53iface.Route53API) error {
 	dnsIPs := []string{}
 	for _, dnsName := range dnsNames {
 		dnsIPs = append(dnsIPs, getIPFromDNS(dnsName, prefix))
@@ -241,13 +249,13 @@ func reconcile(instanceIPs, dnsNames []string, prefix, hostedZoneId string, clie
 	instanceIPSet := StringSet(instanceIPs)
 
 	createdInstanceIPs := findCreatedInstances(instanceIPSet, dnsIPSet)
-	registerErr := registerCreatedInstances(createdInstanceIPs, prefix, hostedZoneId, client)
+	registerErr := registerCreatedInstances(createdInstanceIPs, prefix, domain, hostedZoneId, client)
 	if registerErr != nil {
 		return registerErr
 	}
 
 	deletedInstanceIPs := findDeletedInstances(instanceIPSet, dnsIPSet)
-	removeErr := removeDeletedInstances(deletedInstanceIPs, prefix, hostedZoneId, client)
+	removeErr := removeDeletedInstances(deletedInstanceIPs, prefix, domain, hostedZoneId, client)
 	if removeErr != nil {
 		return removeErr
 	}
@@ -283,7 +291,7 @@ func run(c *Config, clients *Clients) {
 			continue
 		}
 
-		err = reconcile(ips, dnsEntries, c.Prefix, hostedZoneId, clients.Route53Client)
+		err = reconcile(ips, dnsEntries, c.Prefix, c.Domain, hostedZoneId, clients.Route53Client)
 		if err != nil {
 			log.Warnf("Error while reconciling DNS entries: %s", err)
 			continue
