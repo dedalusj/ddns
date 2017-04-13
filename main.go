@@ -8,6 +8,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/aws/aws-sdk-go/service/route53"
@@ -28,6 +29,47 @@ type Config struct {
 	Prefix   string
 	Interval time.Duration
 	Debug    bool
+}
+
+type Tag struct {
+	Name  string
+	Value string
+}
+
+func NewTag(tag string) (Tag, error) {
+	pieces := strings.SplitN(tag, "=", 2)
+	if len(pieces) < 2 {
+		return Tag{}, fmt.Errorf("Invalid tag [%s]. Expected tag=value format", tag)
+	}
+	t := Tag{Name: pieces[0], Value: pieces[1]}
+	log.WithFields(log.Fields{
+		"name": t.Name,
+		"value": t.Value,
+	}).Info("Parsed tag")
+	return t, nil
+}
+
+func (t Tag) String() string {
+	return fmt.Sprintf("%s=%s", t.Name, t.Value)
+}
+
+type Clients struct {
+	EC2Client     ec2iface.EC2API
+	Route53Client route53iface.Route53API
+}
+
+func NewEC2Client() ec2iface.EC2API {
+	s := session.Must(session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{Region: aws.String(os.Getenv("AWS_DEFAULT_REGION"))},
+	}))
+	return ec2.New(s)
+}
+
+func NewRoute53Client() route53iface.Route53API {
+	s := session.Must(session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{Region: aws.String(os.Getenv("AWS_DEFAULT_REGION"))},
+	}))
+	return route53.New(s)
 }
 
 func initLogging(debug bool) {
