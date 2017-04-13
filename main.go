@@ -1,9 +1,18 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
+	"github.com/aws/aws-sdk-go/service/route53"
+	"github.com/aws/aws-sdk-go/service/route53/route53iface"
+	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 )
 
@@ -13,8 +22,273 @@ const (
 
 var version string
 
-func run(c *cli.Context) {
+type Config struct {
+	Tag      string
+	Domain   string
+	Prefix   string
+	Interval time.Duration
+	Debug    bool
+}
 
+func initLogging(debug bool) {
+	log.SetFormatter(&log.TextFormatter{})
+	log.SetOutput(os.Stderr)
+	log.SetLevel(log.InfoLevel)
+	if debug {
+		log.SetLevel(log.DebugLevel)
+	}
+}
+
+func getInstances(tag Tag, client ec2iface.EC2API) ([]*ec2.Instance, error) {
+	params := &ec2.DescribeInstancesInput{
+		Filters: []*ec2.Filter{
+			{
+				Name: aws.String("tag:" + tag.Name),
+				Values: aws.StringSlice([]string{tag.Value}),
+			},
+		},
+	}
+
+	resp, err := client.DescribeInstances(params)
+	if err != nil {
+		return []*ec2.Instance{}, errors.Wrapf(err, "Describing instances with tag [%s]", tag)
+	}
+
+	instances := []*ec2.Instance{}
+	for _, r := range resp.Reservations {
+		for _, i := range r.Instances {
+			instances = append(instances, i)
+		}
+	}
+
+	log.WithFields(log.Fields{
+		"num": len(instances),
+		"tag": tag,
+	}).Debug("Fetched instaces")
+	return instances, nil
+}
+
+func getIPs(tag Tag, client ec2iface.EC2API) ([]string, error) {
+	instances, err := getInstances(tag, client)
+	if err != nil {
+		return []string{}, err
+	}
+
+	ips := []string{}
+	for _, i := range instances {
+		ips = append(ips, *i.PublicIpAddress)
+	}
+	return ips, nil
+}
+
+func getHostedZoneId(domain string, client route53iface.Route53API) (string, error) {
+	hostedZoneRequest := &route53.ListHostedZonesByNameInput{
+		DNSName:      aws.String(domain),
+	}
+	hostedZones, err := client.ListHostedZonesByName(hostedZoneRequest)
+	if err != nil {
+		return "", errors.Wrapf(err, "Listing hosted zones by name [%s]", domain)
+	}
+	if len(hostedZones.HostedZones) != 1 {
+		return "", fmt.Errorf("Invalid number of hosted zones [%d] for domain [%s]", len(hostedZones.HostedZones), domain)
+	}
+
+	hostedZoneId := *hostedZones.HostedZones[0].Id
+	log.WithField("id", hostedZoneId).Info("Fetched hosted zone id")
+	return hostedZoneId, nil
+}
+
+func getRecords(hostedZoneId string, client route53iface.Route53API) ([]*route53.ResourceRecordSet, error) {
+	recordSetsRequest := &route53.ListResourceRecordSetsInput{
+		HostedZoneId: &hostedZoneId,
+	}
+	resp, err := client.ListResourceRecordSets(recordSetsRequest)
+	if err != nil {
+		return []*route53.ResourceRecordSet{}, errors.Wrapf(err, "Listing record sets for zone with ID [%s]", hostedZoneId)
+	}
+	return resp.ResourceRecordSets, nil
+}
+
+func getDNSNames(hostedZoneId, prefix string, client route53iface.Route53API) ([]string, error) {
+	records, err := getRecords(hostedZoneId, client)
+	if err != nil {
+		return []string{}, err
+	}
+
+	names := []string{}
+	for _, r := range records {
+		if strings.HasPrefix(*r.Name, prefix) {
+			names = append(names, *r.Name)
+		}
+	}
+	log.WithFields(log.Fields{
+		"num": len(names),
+		"prefix": prefix,
+		"hostedZone": hostedZoneId,
+	}).Debug("Fetched DNS records")
+	return names, nil
+}
+
+func StringSet(s []string) map[string]bool {
+	set := map[string]bool{}
+	for _, i := range s {
+		set[i] = true
+	}
+	return set
+}
+
+func getIPFromDNS(dnsName, prefix string) string {
+	pieces := strings.SplitN(dnsName, ".", 2)
+	return strings.Replace(pieces[0][len(prefix):], "-", ".", -1)
+}
+
+func getDNSFromIP(ip, prefix string) string {
+	return prefix + strings.Replace(ip, ".", "-", -1)
+}
+
+func findCreatedInstances(instanceIPSet, dnsIPSet map[string]bool) []string {
+	createdInstances := []string{}
+	for ip := range instanceIPSet {
+		if _, ok := dnsIPSet[ip]; !ok {
+			newIP := string(ip)
+			log.WithField("ip", newIP).Debug("Found new instance")
+			createdInstances = append(createdInstances, newIP)
+		}
+	}
+	return createdInstances
+}
+
+func findDeletedInstances(instanceIPSet, dnsIPSet map[string]bool) []string {
+	deletedInstances := []string{}
+	for ip := range dnsIPSet {
+		if _, ok := instanceIPSet[ip]; !ok {
+			newIP := string(ip)
+			log.WithField("ip", newIP).Debug("Found removed instance")
+			deletedInstances = append(deletedInstances, newIP)
+		}
+	}
+	return deletedInstances
+}
+
+func registerCreatedInstances(createdInstanceIPs []string, prefix, hostedZoneId string, client route53iface.Route53API) error {
+	params := &route53.ChangeResourceRecordSetsInput{
+		ChangeBatch: &route53.ChangeBatch{
+			Changes: []*route53.Change{},
+		},
+		HostedZoneId: aws.String(hostedZoneId),
+	}
+
+	for _, ip := range createdInstanceIPs {
+		change := &route53.Change{
+			Action: aws.String("CREATE"),
+			ResourceRecordSet: &route53.ResourceRecordSet{
+				Name: aws.String(getDNSFromIP(ip, prefix)),
+				Type: aws.String("A"),
+				ResourceRecords: []*route53.ResourceRecord{{Value: aws.String(ip)}},
+				TTL: aws.Int64(60),
+			},
+		}
+		params.ChangeBatch.Changes = append(params.ChangeBatch.Changes, change)
+	}
+
+	_, err := client.ChangeResourceRecordSets(params)
+	if err != nil {
+		return errors.Wrap(err, "Registering instance IPs")
+	}
+
+	log.WithFields(log.Fields{
+		"number": len(createdInstanceIPs),
+	}).Info("Registered DNS name for created instance")
+	return nil
+}
+
+func removeDeletedInstances(deletedInstanceIPs []string, prefix, hostedZoneId string, client route53iface.Route53API) error {
+	params := &route53.ChangeResourceRecordSetsInput{
+		ChangeBatch: &route53.ChangeBatch{
+			Changes: []*route53.Change{},
+		},
+		HostedZoneId: aws.String(hostedZoneId),
+	}
+
+	for _, ip := range deletedInstanceIPs {
+		change := &route53.Change{
+			Action: aws.String("DELETE"),
+			ResourceRecordSet: &route53.ResourceRecordSet{
+				Name: aws.String(getDNSFromIP(ip, prefix)),
+			},
+		}
+		params.ChangeBatch.Changes = append(params.ChangeBatch.Changes, change)
+	}
+
+	_, err := client.ChangeResourceRecordSets(params)
+	if err != nil {
+		return errors.Wrap(err, "Removing instance IPs")
+	}
+
+	log.WithFields(log.Fields{
+		"number": len(deletedInstanceIPs),
+	}).Info("Removed DNS name for deleted instance")
+	return nil
+}
+
+func reconcile(instanceIPs, dnsNames []string, prefix, hostedZoneId string, client route53iface.Route53API) error {
+	dnsIPs := []string{}
+	for _, dnsName := range dnsNames {
+		dnsIPs = append(dnsIPs, getIPFromDNS(dnsName, prefix))
+	}
+
+	dnsIPSet := StringSet(dnsIPs)
+	instanceIPSet := StringSet(instanceIPs)
+
+	createdInstanceIPs := findCreatedInstances(instanceIPSet, dnsIPSet)
+	registerErr := registerCreatedInstances(createdInstanceIPs, prefix, hostedZoneId, client)
+	if registerErr != nil {
+		return registerErr
+	}
+
+	deletedInstanceIPs := findDeletedInstances(instanceIPSet, dnsIPSet)
+	removeErr := removeDeletedInstances(deletedInstanceIPs, prefix, hostedZoneId, client)
+	if removeErr != nil {
+		return removeErr
+	}
+
+	return nil
+}
+
+func run(c *Config, clients *Clients) {
+	initLogging(c.Debug)
+	log.WithField("version", version).Info("DDNS")
+
+	tag, err := NewTag(c.Tag)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	hostedZoneId, err := getHostedZoneId(c.Domain, clients.Route53Client)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for {
+		time.Sleep(c.Interval)
+		ips, err := getIPs(tag, clients.EC2Client)
+		if err != nil {
+			log.Warnf("Error while fetching IPs: %s", err)
+			continue
+		}
+
+		dnsEntries, err := getDNSNames(hostedZoneId, c.Prefix, clients.Route53Client)
+		if err != nil {
+			log.Warnf("Error while fetching DNS entries: %s", err)
+			continue
+		}
+
+		err = reconcile(ips, dnsEntries, c.Prefix, hostedZoneId, clients.Route53Client)
+		if err != nil {
+			log.Warnf("Error while reconciling DNS entries: %s", err)
+			continue
+		}
+	}
 }
 
 func main() {
@@ -22,7 +296,7 @@ func main() {
 	app.Name = "ddns"
 	app.Usage = "Command line tool for dynamically generating domain entries for EC2 instances"
 	app.Version = version
-	app.Action = run
+
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "tag, t",
@@ -51,6 +325,20 @@ func main() {
 			Usage:  "Enable debug logging",
 			EnvVar: envPrefix + "DEBUG",
 		},
+	}
+
+	app.Action = func(c *cli.Context) error {
+		run(&Config{
+			Tag: c.String("tag"),
+			Domain: c.String("domain"),
+			Prefix: c.String("prefix"),
+			Interval: c.Duration("interval"),
+			Debug: c.Bool("debug"),
+		}, &Clients{
+			EC2Client: NewEC2Client(),
+			Route53Client: NewRoute53Client(),
+		})
+		return nil
 	}
 
 	app.Run(os.Args)
