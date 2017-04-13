@@ -46,6 +46,10 @@ func getInstances(tag Tag, client ec2iface.EC2API) ([]*ec2.Instance, error) {
 				Name: aws.String("tag:" + tag.Name),
 				Values: aws.StringSlice([]string{tag.Value}),
 			},
+			{
+				Name: aws.String("instance-state-name"),
+				Values: aws.StringSlice([]string{"pending", "running"}),
+			},
 		},
 	}
 
@@ -223,6 +227,9 @@ func removeDeletedInstances(deletedInstanceIPs []string, prefix, domain, hostedZ
 			Action: aws.String("DELETE"),
 			ResourceRecordSet: &route53.ResourceRecordSet{
 				Name: aws.String(getDNSFromIP(ip, prefix) + "." + domain),
+				Type: aws.String("A"),
+				ResourceRecords: []*route53.ResourceRecord{{Value: aws.String(ip)}},
+				TTL: aws.Int64(60),
 			},
 		}
 		params.ChangeBatch.Changes = append(params.ChangeBatch.Changes, change)
