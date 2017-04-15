@@ -146,7 +146,7 @@ func gethostedZoneID(domain string, client route53iface.Route53API) (string, err
 
 func getRecords(hostedZoneID string, client route53iface.Route53API) ([]*route53.ResourceRecordSet, error) {
 	recordSetsRequest := &route53.ListResourceRecordSetsInput{
-		hostedZoneID: &hostedZoneID,
+		HostedZoneId: &hostedZoneID,
 	}
 	resp, err := client.ListResourceRecordSets(recordSetsRequest)
 	if err != nil {
@@ -225,7 +225,7 @@ func registerCreatedInstances(createdInstanceIPs []string, prefix, domain, hoste
 		ChangeBatch: &route53.ChangeBatch{
 			Changes: []*route53.Change{},
 		},
-		hostedZoneID: aws.String(hostedZoneID),
+		HostedZoneId: aws.String(hostedZoneID),
 	}
 
 	for _, ip := range createdInstanceIPs {
@@ -261,7 +261,7 @@ func removeDeletedInstances(deletedInstanceIPs []string, prefix, domain, hostedZ
 		ChangeBatch: &route53.ChangeBatch{
 			Changes: []*route53.Change{},
 		},
-		hostedZoneID: aws.String(hostedZoneID),
+		HostedZoneId: aws.String(hostedZoneID),
 	}
 
 	for _, ip := range deletedInstanceIPs {
