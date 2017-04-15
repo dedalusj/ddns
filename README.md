@@ -19,6 +19,6 @@ The command line parameters can also be controlled with an environment variable 
 
 #### Development
 
-DDNS relies on [Glide](https://glide.sh) to version its dependencies. After installing Glide simply run `glide up` to download the dependencies.
+DDNS relies on [Glide](https://glide.sh) to version its dependencies. After installing Glide simply run `glide install` to download the dependencies.
 
 To build DDNS run `make build`.
