@@ -127,7 +127,7 @@ func getIPs(tag Tag, client ec2iface.EC2API) ([]string, error) {
 	return ips, nil
 }
 
-func getHostedZoneId(domain string, client route53iface.Route53API) (string, error) {
+func gethostedZoneID(domain string, client route53iface.Route53API) (string, error) {
 	hostedZoneRequest := &route53.ListHostedZonesByNameInput{
 		DNSName:      aws.String(domain),
 	}
@@ -139,24 +139,24 @@ func getHostedZoneId(domain string, client route53iface.Route53API) (string, err
 		return "", fmt.Errorf("Invalid number of hosted zones [%d] for domain [%s]", len(hostedZones.HostedZones), domain)
 	}
 
-	hostedZoneId := *hostedZones.HostedZones[0].Id
-	log.WithField("id", hostedZoneId).Info("Fetched hosted zone id")
-	return hostedZoneId, nil
+	hostedZoneID := *hostedZones.HostedZones[0].Id
+	log.WithField("id", hostedZoneID).Info("Fetched hosted zone id")
+	return hostedZoneID, nil
 }
 
-func getRecords(hostedZoneId string, client route53iface.Route53API) ([]*route53.ResourceRecordSet, error) {
+func getRecords(hostedZoneID string, client route53iface.Route53API) ([]*route53.ResourceRecordSet, error) {
 	recordSetsRequest := &route53.ListResourceRecordSetsInput{
-		HostedZoneId: &hostedZoneId,
+		hostedZoneID: &hostedZoneID,
 	}
 	resp, err := client.ListResourceRecordSets(recordSetsRequest)
 	if err != nil {
-		return []*route53.ResourceRecordSet{}, errors.Wrapf(err, "Listing record sets for zone with ID [%s]", hostedZoneId)
+		return []*route53.ResourceRecordSet{}, errors.Wrapf(err, "Listing record sets for zone with ID [%s]", hostedZoneID)
 	}
 	return resp.ResourceRecordSets, nil
 }
 
-func getDNSNames(hostedZoneId, prefix string, client route53iface.Route53API) ([]string, error) {
-	records, err := getRecords(hostedZoneId, client)
+func getDNSNames(hostedZoneID, prefix string, client route53iface.Route53API) ([]string, error) {
+	records, err := getRecords(hostedZoneID, client)
 	if err != nil {
 		return []string{}, err
 	}
@@ -170,7 +170,7 @@ func getDNSNames(hostedZoneId, prefix string, client route53iface.Route53API) ([
 	log.WithFields(log.Fields{
 		"num": len(names),
 		"prefix": prefix,
-		"hostedZone": hostedZoneId,
+		"hostedZone": hostedZoneID,
 	}).Debug("Fetched DNS records")
 	return names, nil
 }
@@ -216,7 +216,7 @@ func findDeletedInstances(instanceIPSet, dnsIPSet map[string]bool) []string {
 	return deletedInstances
 }
 
-func registerCreatedInstances(createdInstanceIPs []string, prefix, domain, hostedZoneId string, client route53iface.Route53API) error {
+func registerCreatedInstances(createdInstanceIPs []string, prefix, domain, hostedZoneID string, client route53iface.Route53API) error {
 	if len(createdInstanceIPs) == 0 {
 		return nil
 	}
@@ -225,7 +225,7 @@ func registerCreatedInstances(createdInstanceIPs []string, prefix, domain, hoste
 		ChangeBatch: &route53.ChangeBatch{
 			Changes: []*route53.Change{},
 		},
-		HostedZoneId: aws.String(hostedZoneId),
+		hostedZoneID: aws.String(hostedZoneID),
 	}
 
 	for _, ip := range createdInstanceIPs {
@@ -252,7 +252,7 @@ func registerCreatedInstances(createdInstanceIPs []string, prefix, domain, hoste
 	return nil
 }
 
-func removeDeletedInstances(deletedInstanceIPs []string, prefix, domain, hostedZoneId string, client route53iface.Route53API) error {
+func removeDeletedInstances(deletedInstanceIPs []string, prefix, domain, hostedZoneID string, client route53iface.Route53API) error {
 	if len(deletedInstanceIPs) == 0 {
 		return nil
 	}
@@ -261,7 +261,7 @@ func removeDeletedInstances(deletedInstanceIPs []string, prefix, domain, hostedZ
 		ChangeBatch: &route53.ChangeBatch{
 			Changes: []*route53.Change{},
 		},
-		HostedZoneId: aws.String(hostedZoneId),
+		hostedZoneID: aws.String(hostedZoneID),
 	}
 
 	for _, ip := range deletedInstanceIPs {
@@ -288,7 +288,7 @@ func removeDeletedInstances(deletedInstanceIPs []string, prefix, domain, hostedZ
 	return nil
 }
 
-func reconcile(instanceIPs, dnsNames []string, prefix, domain, hostedZoneId string, client route53iface.Route53API) error {
+func reconcile(instanceIPs, dnsNames []string, prefix, domain, hostedZoneID string, client route53iface.Route53API) error {
 	dnsIPs := []string{}
 	for _, dnsName := range dnsNames {
 		dnsIPs = append(dnsIPs, getIPFromDNS(dnsName, prefix))
@@ -298,13 +298,13 @@ func reconcile(instanceIPs, dnsNames []string, prefix, domain, hostedZoneId stri
 	instanceIPSet := StringSet(instanceIPs)
 
 	createdInstanceIPs := findCreatedInstances(instanceIPSet, dnsIPSet)
-	registerErr := registerCreatedInstances(createdInstanceIPs, prefix, domain, hostedZoneId, client)
+	registerErr := registerCreatedInstances(createdInstanceIPs, prefix, domain, hostedZoneID, client)
 	if registerErr != nil {
 		return registerErr
 	}
 
 	deletedInstanceIPs := findDeletedInstances(instanceIPSet, dnsIPSet)
-	removeErr := removeDeletedInstances(deletedInstanceIPs, prefix, domain, hostedZoneId, client)
+	removeErr := removeDeletedInstances(deletedInstanceIPs, prefix, domain, hostedZoneID, client)
 	if removeErr != nil {
 		return removeErr
 	}
@@ -324,7 +324,7 @@ func run(c *Config, clients *Clients) {
 	if c.Domain[len(c.Domain)-1] != '.' {
 		c.Domain += "."
 	}
-	hostedZoneId, err := getHostedZoneId(c.Domain, clients.Route53Client)
+	hostedZoneID, err := gethostedZoneID(c.Domain, clients.Route53Client)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -337,13 +337,13 @@ func run(c *Config, clients *Clients) {
 			continue
 		}
 
-		dnsEntries, err := getDNSNames(hostedZoneId, c.Prefix, clients.Route53Client)
+		dnsEntries, err := getDNSNames(hostedZoneID, c.Prefix, clients.Route53Client)
 		if err != nil {
 			log.Warnf("Error while fetching DNS entries: %s", err)
 			continue
 		}
 
-		err = reconcile(ips, dnsEntries, c.Prefix, c.Domain, hostedZoneId, clients.Route53Client)
+		err = reconcile(ips, dnsEntries, c.Prefix, c.Domain, hostedZoneID, clients.Route53Client)
 		if err != nil {
 			log.Warnf("Error while reconciling DNS entries: %s", err)
 			continue
