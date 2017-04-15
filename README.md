@@ -1,7 +1,7 @@
-[![Build Status](https://travis-ci.org/dedalusj/ddns.svg?branch=master)](https://travis-ci.org/dedalusj/ddns)
-
 DDNS
 ====
+
+[![Build Status](https://travis-ci.org/dedalusj/ddns.svg?branch=master)](https://travis-ci.org/dedalusj/ddns)
 
 DDNS is a command line tool that maintains entries in a Route53 hosted zone in sync with the EC2 instances in a scaling group.
 
