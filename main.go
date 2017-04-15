@@ -321,6 +321,9 @@ func run(c *Config, clients *Clients) {
 		log.Fatal(err)
 	}
 
+	if c.Domain[len(c.Domain)-1] != '.' {
+		c.Domain += "."
+	}
 	hostedZoneId, err := getHostedZoneId(c.Domain, clients.Route53Client)
 	if err != nil {
 		log.Fatal(err)
